@@ -94,7 +94,8 @@
 // pbuffer on MacOS X is not implemented
 // there is the GL_APPLE_pixel_buffer extension for MacOSX >= 10.3,
 // so this could be changed
-#define OPENCSG_HAVE_PBUFFER 1
+// FIXME: This should be a build option
+//#define OPENCSG_HAVE_PBUFFER 1
 #endif // __APPLE__
 
 #endif // __OpenCSG__opencsg_config_h__

@@ -22,6 +22,8 @@
 #include "opencsgConfig.h"
 #include "frameBufferObject.h"
 
+#include "system-gl.h"
+
 namespace OpenCSG {
 
     namespace OpenGL {
@@ -44,7 +46,7 @@ namespace OpenCSG {
 
         bool FrameBufferObject::ReadCurrent()
         {
-            bool haveFBO = GLEW_ARB_framebuffer_object != 0;
+            bool haveFBO = hasGLExtension(ARB_framebuffer_object) != 0;
 
             if (haveFBO)
                 glGetIntegerv(GL_FRAMEBUFFER_BINDING, &oldFramebufferID);
@@ -56,29 +58,24 @@ namespace OpenCSG {
         // shareObjects and copyContext do not make sense here, context remains the same.
         bool FrameBufferObject::Initialize(int width, int height, bool /* shareObjects */, bool /* copyContext */ )
         {
-            bool haveFBO = GLEW_ARB_framebuffer_object != 0;
+            bool haveFBO = hasGLExtension(ARB_framebuffer_object) != 0;
             if (!haveFBO)
                 return false;
 
             this->width = width;
             this->height = height;
 
-            glGenFramebuffers(1, &framebufferID);
+            GL_DEBUG_CHECKD(glGenFramebuffers(1, &framebufferID));
             glGenRenderbuffers(1, &depthID); 
             glGenTextures(1, &textureID);
 
             glBindFramebuffer(GL_FRAMEBUFFER, framebufferID);
 
-            GLenum target = (GLEW_ARB_texture_rectangle || GLEW_EXT_texture_rectangle || GLEW_NV_texture_rectangle)
-                ? GL_TEXTURE_RECTANGLE_ARB
-                : GL_TEXTURE_2D; // implicitely asks for GL_ARB_texture_non_power_of_two.
-                                 // this should have been checked in channelManager.cpp
-
-            glBindTexture(target, textureID);
-            glTexImage2D(target, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_INT, 0);
-            glTexParameteri(target, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-            glTexParameteri(target, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, target, textureID, 0);
+            glBindTexture(GL_TEXTURE_2D, textureID);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_INT, 0);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, textureID, 0);
 
             glBindRenderbuffer(GL_RENDERBUFFER, depthID);
             glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_STENCIL, width, height);
@@ -93,9 +90,7 @@ namespace OpenCSG {
             }
 
             glBindFramebuffer(GL_FRAMEBUFFER, oldFramebufferID);
-            glBindTexture(target, 0);
-
-            textureTarget = target;
+            glBindTexture(GL_TEXTURE_2D, 0);
 
             initialized = true;
 
@@ -156,7 +151,7 @@ namespace OpenCSG {
         // Sets the frame buffer texture as active texture object.
         void FrameBufferObject::Bind() const
         {
-            glBindTexture(textureTarget, textureID);
+            glBindTexture(GL_TEXTURE_2D, textureID);
         }
 
     } // namespace OpenGL

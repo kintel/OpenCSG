@@ -21,12 +21,7 @@
 //
 
 #include "opencsgConfig.h"
-#include <GL/glew.h>
-#ifdef _WIN32
-#include <GL/wglew.h>
-#elif !defined(__APPLE__)
-#include <GL/glxew.h>
-#endif
+#include "system-gl.h"
 #include "area.h"
 #include "openglHelper.h"
 #include "stencilManager.h"

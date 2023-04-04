@@ -33,6 +33,8 @@
 #include "primitiveHelper.h"
 #include "scissorMemo.h"
 
+#include "system-gl.h"
+
 #include <algorithm>
 #include <map>
 
@@ -63,78 +65,6 @@ namespace OpenCSG {
             return dta;
         }
 
-        // Stores Ids in the alpha buffer only -> only 255 primitives are possible
-        class SCSChannelManagerAlphaOnly : public ChannelManagerForBatches {
-        public:
-            virtual void merge();
-        };
-
-        void SCSChannelManagerAlphaOnly::merge() {
-
-            bool isFixedFunction = true;
-            setupProjectiveTexture(isFixedFunction);
-
-            glEnable(GL_ALPHA_TEST);
-            glEnable(GL_CULL_FACE);
-            glEnable(GL_DEPTH_TEST);
-            glDepthFunc(GL_LESS);
-            glDepthMask(GL_TRUE);
-            glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
-
-            std::vector<Channel> channels = occupied();
-            for (std::vector<Channel>::const_iterator c = channels.begin(); c!=channels.end(); ++c) {
-
-                setupTexEnv(*c);
-                scissor->recall(*c);
-                scissor->enableScissor();
-
-                const std::vector<Primitive*> primitives = getPrimitives(*c);
-                for (std::vector<Primitive*>::const_iterator j = primitives.begin(); j != primitives.end(); ++j) {
-                    glCullFace((*j)->getOperation() == Intersection ? GL_BACK : GL_FRONT);
-                    RenderData* primitiveData = getRenderData(*j);
-                    GLubyte id = primitiveData->bufferId.a;
-
-                    // Here is an interesting bug, which happened on an ATI HD4670, but actually
-                    // might happen on every hardware. I am not sure whether it can be solved 
-                    // correctly.
-
-                    // Problem is that in optimized mode with some compilers (VC6, Visual Studio 2003
-                    // in particular), when setting the alpha func as follows:
-                    // glAlphaFunc(GL_EQUAL, static_cast<float>(id) / 255.0f);
-                    // the division is optimized as multiplication with 1.0f/255.0f.
-                    // This is a fine and valid optimization. Unfortunately, the results
-                    // are not exactly the same as the direct division for some ids.
-                    // Which is apparently what the ATI driver is doing internally.
-                    // So with comparison with GL_EQUAL fails. 
-
-                    // Fortunately the OpenGL standard enforces that the mapping of color byte
-                    // values to float fragment values be done by division. So if the
-                    // solution found below (just working at double precision) proves
-                    // to work once, it should work forever, such that a precompiling
-                    // lookup table containing the correct alpha reference values is 
-                    // not required. However a bad feeling remains.
-
-                    // The SCSChannelManagerFragmentProgram path implemented below should fix this.
-
-                    double alpha = static_cast<double>(id) / 255.0;
-                    GLfloat fAlpha = static_cast<float>(alpha);
-                    glAlphaFunc(GL_EQUAL, fAlpha);
-
-                    (*j)->render();
-                }
-            }
-
-            scissor->disableScissor();
-
-            glDisable(GL_ALPHA_TEST);
-            glDisable(GL_CULL_FACE);
-            glDepthFunc(GL_LEQUAL);
-
-            resetProjectiveTexture(isFixedFunction);
-
-            clear();
-        }
-
         // Stores Ids in the all components of the color buffer
         // -> in theory, 2^32-1 primitives are possible
         class SCSChannelManagerFragmentProgram : public ChannelManagerForBatches {
@@ -150,6 +80,7 @@ namespace OpenCSG {
             return mCurrentChannel;
         }
 
+// FIXME: Port to GLSL
         // Emulates eye texgen
         static const char mergeVertexProgram[] =
 "!!ARBvp1.0 OPTION ARB_position_invariant;\n"
@@ -182,24 +113,10 @@ namespace OpenCSG {
         // Note that 1.0f/255.0f cannot be the result of the above computation.
         // Either the result is 0 (if all components were equal, disregarding
         // numerical errors), or larger/equal than 2.0f/255.0f. The alpha function
-        // then is actually set to  GL_LESS, 1.0f/255.0f. This is robust,
-        // in contract to the GL_EQUAL in SCSChannelManagerAlphaOnly above.
+        // then is actually set to  GL_LESS, 1.0f/255.0f. This is robust.
         // The scaling by 2.0f is required for NVidia hardware, which considers
         // the alpha function GL_LESS, 0.5f/255.0f as GL_LESS, 0.0f for some reason.
-        static const char mergeFragmentProgramRect[] =
-"!!ARBfp1.0\n"
-"TEMP    temp;\n"
-"ATTRIB  tex0 = fragment.texcoord[0];\n"
-"ATTRIB  col0 = fragment.color;\n"
-"PARAM   scaleByTwo = { 2.0, 2.0, 2.0, 2.0 };\n"
-"OUTPUT  out = result.color;\n"
-"TXP     temp, tex0, texture[0], RECT;\n"
-"SUB     temp, temp, col0;\n"
-"ABS     temp, temp;\n"
-"DP4     out, temp, scaleByTwo;\n"
-"END";
-
-        static const char mergeFragmentProgram2D[] =
+        static const char mergeFragmentProgram[] =
 "!!ARBfp1.0\n"
 "TEMP    temp;\n"
 "ATTRIB  tex0 = fragment.texcoord[0];\n"
@@ -214,28 +131,25 @@ namespace OpenCSG {
 
         void SCSChannelManagerFragmentProgram::merge()
         {
-            GLuint vId = OpenGL::getARBVertexProgram(mergeVertexProgram, (sizeof(mergeVertexProgram) / sizeof(mergeVertexProgram[0])) - 1);
-            glBindProgramARB(GL_VERTEX_PROGRAM_ARB, vId);
+            GL_DEBUG_CHECKD(GLuint vId = OpenGL::getARBVertexProgram(mergeVertexProgram, (sizeof(mergeVertexProgram) / sizeof(mergeVertexProgram[0])) - 1));
+            GL_DEBUG_CHECKD(glBindProgramARB(GL_VERTEX_PROGRAM_ARB, vId));
             glEnable(GL_VERTEX_PROGRAM_ARB);
 
-            GLuint fId =
-                 isRectangularTexture()
-                   ? OpenGL::getARBFragmentProgram(mergeFragmentProgramRect, (sizeof(mergeFragmentProgramRect) / sizeof(mergeFragmentProgramRect[0])) - 1)
-                   : OpenGL::getARBFragmentProgram(mergeFragmentProgram2D, (sizeof(mergeFragmentProgram2D) / sizeof(mergeFragmentProgram2D[0])) - 1);
-            glBindProgramARB(GL_FRAGMENT_PROGRAM_ARB, fId);
-            glEnable(GL_FRAGMENT_PROGRAM_ARB);
+            GLuint fId = OpenGL::getARBFragmentProgram(mergeFragmentProgram, (sizeof(mergeFragmentProgram) / sizeof(mergeFragmentProgram[0])) - 1);
+            GL_DEBUG_CHECKD(glBindProgramARB(GL_FRAGMENT_PROGRAM_ARB, fId));
+            GL_DEBUG_CHECKD(glEnable(GL_FRAGMENT_PROGRAM_ARB));
 
             bool isFixedFunction = false;
-            setupProjectiveTexture(isFixedFunction);
+            GL_DEBUG_CHECKD(setupProjectiveTexture(isFixedFunction));
 
-            glEnable(GL_ALPHA_TEST);
+            GL_DEBUG_CHECKD(glEnable(GL_ALPHA_TEST));
             glEnable(GL_CULL_FACE);
             glEnable(GL_DEPTH_TEST);
             glDepthFunc(GL_LESS);
             glDepthMask(GL_TRUE);
             glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
 
-            glAlphaFunc(GL_LESS, 1.0f / 255.0f);
+            GL_DEBUG_CHECKD(glAlphaFunc(GL_LESS, 1.0f / 255.0f));
 
             std::vector<Channel> channels;
             channels.push_back(AllChannels);
@@ -246,35 +160,30 @@ namespace OpenCSG {
 
                 const std::vector<Primitive*> primitives = getPrimitives(*c);
                 for (std::vector<Primitive*>::const_iterator j = primitives.begin(); j != primitives.end(); ++j) {
-                    glCullFace((*j)->getOperation() == Intersection ? GL_BACK : GL_FRONT);
+                    GL_DEBUG_CHECKD(glCullFace((*j)->getOperation() == Intersection ? GL_BACK : GL_FRONT));
                     RenderData* primitiveData = getRenderData(*j);
                     GLubyte * id = primitiveData->bufferId.vec();
-                    glColor4ubv(id);
-                    (*j)->render();
+                    GL_DEBUG_CHECKD(glColor4ubv(id));
+                    GL_DEBUG_CHECKD((*j)->render());
                 }
             }
 
-            scissor->disableScissor();
+            GL_DEBUG_CHECKD(scissor->disableScissor());
 
             glDisable(GL_ALPHA_TEST);
             glDisable(GL_CULL_FACE);
             glDepthFunc(GL_LEQUAL);
-            glDisable(GL_FRAGMENT_PROGRAM_ARB);
+            GL_DEBUG_CHECKD(glDisable(GL_FRAGMENT_PROGRAM_ARB));
             glDisable(GL_VERTEX_PROGRAM_ARB);
 
             resetProjectiveTexture(isFixedFunction);
 
-            clear();
+            GL_DEBUG_CHECKD(clear());
         }
 
 
         ChannelManagerForBatches* getChannelManager() {
-
-            if (GLEW_ARB_vertex_program && GLEW_ARB_fragment_program) {
-                return new SCSChannelManagerFragmentProgram;
-            }
-
-            return new SCSChannelManagerAlphaOnly;
+            return new SCSChannelManagerFragmentProgram;
         }
 
 
@@ -560,6 +469,7 @@ namespace OpenCSG {
         if (!channelMgr->init())
         {
             delete channelMgr;
+            GL_DEBUG_CHECKD();
             return;
         }
 
@@ -612,9 +522,9 @@ namespace OpenCSG {
         glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
         glClearDepth(0.0);      // near clipping plane! essential for algorithm!
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
-        glClearDepth(1.0);
+        GL_DEBUG_CHECKD(glClearDepth(1.0));
 
-        renderIntersectedFront(intersected);
+        GL_DEBUG_CHECKD(renderIntersectedFront(intersected));
         scissor->enableDepthBounds();
         switch (algorithm) {
         case OcclusionQuery:
@@ -632,15 +542,15 @@ namespace OpenCSG {
             break; // does not happen when invoked correctly           
         }
         scissor->disableDepthBounds();
-        renderIntersectedBack(intersected);
+        GL_DEBUG_CHECKD(renderIntersectedBack(intersected));
 
         scissor->disableScissor();
 
-        channelMgr->store(channelMgr->current(), primitives, 0);
-        channelMgr->free();
+        GL_DEBUG_CHECKD(channelMgr->store(channelMgr->current(), primitives, 0));
+        GL_DEBUG_CHECKD(channelMgr->free());
 
-        delete scissor;
-        delete channelMgr;
-    }
+        GL_DEBUG_CHECKD(delete scissor);
+        GL_DEBUG_CHECKD(delete channelMgr);
+   }
 
 } // namespace OpenCSG

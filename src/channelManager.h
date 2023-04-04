@@ -26,7 +26,7 @@
 #define __OpenCSG__channel_manager_h__
 
 #include "opencsgConfig.h"
-#include <GL/glew.h>
+#include "system-gl.h"
 #include <utility>
 #include <vector>
 
@@ -83,9 +83,6 @@ namespace OpenCSG {
         /// activate texenv settings such that information in channel is
         /// moved into alpha, to allow alpha testing of the channel.
         static void setupTexEnv(Channel channel);
-
-    protected:
-        bool isRectangularTexture() const;
 
     private:
         ChannelManager(const ChannelManager&);

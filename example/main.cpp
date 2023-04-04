@@ -22,7 +22,7 @@
 // simple example program for OpenCSG using Glut
 //
 
-#include <GL/glew.h>
+#include "system-gl.h"
 #include <opencsg.h>
 #include "displaylistPrimitive.h"
 #include <iostream>
