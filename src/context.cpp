@@ -54,6 +54,7 @@ namespace OpenCSG {
             FrameBufferObject* fARB;
             FrameBufferObjectExt* fEXT;
             std::map<const char*, GLuint> idFP;
+            std::map<std::pair<GLuint,GLuint>, GLuint> idShaderProg;
         };
 
         static std::map<int, ContextData> gContextDataMap;
@@ -107,6 +108,74 @@ namespace OpenCSG {
         GLuint getARBFragmentProgram(const char* prog, int len)
         {
             return getARBProgram(GL_FRAGMENT_PROGRAM_ARB, prog, len);
+        }
+
+        GLuint getShader(GLenum target, const char* prog)
+        {
+            int context = getContext();
+            ContextData& contextData = gContextDataMap[context];
+
+            std::map<const char*, GLuint>::iterator it = contextData.idFP.find(prog);
+            if (it == contextData.idFP.end())
+            {
+                GLuint id = glCreateShader(target);
+                glShaderSource(id, 1, &prog, NULL);
+                glCompileShader(id);
+                GLint success;
+                char infoLog[512];
+                glGetShaderiv(id, GL_COMPILE_STATUS, &success);
+                if (success != GL_TRUE) {
+                    glGetShaderInfoLog(id, 512, NULL, infoLog);
+                    std::cerr << "ERROR: Compilation of shader target " << target << " failed: " << infoLog << std::endl;
+                }
+
+                it = contextData.idFP.insert(std::pair<const char*, GLuint>(prog, id)).first;
+            }
+
+            return it->second;
+        }
+        
+        GLuint getVertexShader(const char* prog)
+        {
+            return getShader(GL_VERTEX_SHADER, prog);
+        }
+
+        GLuint getFragmentShader(const char* prog)
+        {
+            return getShader(GL_FRAGMENT_SHADER, prog);
+        }
+
+        GLuint getProgram(GLuint vertId, GLuint fragId)
+        {
+            int context = getContext();
+            ContextData& contextData = gContextDataMap[context];
+            auto progKey = std::make_pair(vertId, fragId);
+            auto it = contextData.idShaderProg.find(progKey);
+            if (it == contextData.idShaderProg.end())
+            {
+                GLuint id = glCreateProgram();
+                glAttachShader(id, vertId);
+                glAttachShader(id, fragId);
+                glLinkProgram(id);
+                GLint success;
+                char infoLog[512];
+                glGetProgramiv(id, GL_LINK_STATUS, &success);
+                if (success != GL_TRUE) {
+                    glGetProgramInfoLog(id, 512, NULL, infoLog);
+                    std::cerr << "ERROR::SHADER::PROGRAM::LINK_FAILED\n" << infoLog << std::endl;
+                }
+
+                it = contextData.idShaderProg.insert(std::make_pair(progKey, id)).first;
+            }
+
+            return it->second;
+        }
+
+        GLuint getShaderProgram(const char* vert, const char* frag)
+        {
+            GLuint vertexShader = getVertexShader(vert);
+            GLuint fragmentShader = getFragmentShader(frag);
+            return getProgram(vertexShader, fragmentShader);
         }
 
         void freeResources()

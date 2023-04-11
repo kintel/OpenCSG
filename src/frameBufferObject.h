@@ -75,7 +75,7 @@ namespace OpenCSG {
             /// Frame buffer objects do not change the OpenGL context.
             virtual bool haveSeparateContext() const { return false; }
 
-        protected:
+        public:
             int          width;     // width of the frame buffer object
             int          height;    // height of the frame buffer object
 

@@ -34,6 +34,7 @@
 #include "scissorMemo.h"
 
 #include "system-gl.h"
+#include "imageutils.h"
 
 #include <algorithm>
 #include <map>
@@ -41,6 +42,62 @@
 namespace OpenCSG {
 
     namespace {
+
+        void write_debug_image(const char *filename, GLenum format) {
+
+            int width = OpenGL::canvasPos[2] - OpenGL::canvasPos[0];
+            int height = OpenGL::canvasPos[3] - OpenGL::canvasPos[1];
+
+            uint8_t samplesPerPixel;
+            int pixelType;
+            void *data;
+            std::vector<uint8_t> byteBuffer;
+            std::vector<float> floatBuffer;
+            switch(format) {
+                case GL_RGBA: 
+                samplesPerPixel = 4; // R, G, B and A
+                pixelType = GL_UNSIGNED_BYTE;
+                byteBuffer.resize(samplesPerPixel * width * height);
+                data = byteBuffer.data();
+                break;
+                case GL_DEPTH_COMPONENT:
+                samplesPerPixel = 1;
+                pixelType = GL_FLOAT;
+                floatBuffer.resize(samplesPerPixel * width * height);
+                data = floatBuffer.data();
+                break;
+                default:
+                std::cerr << "write_debug_image(): format " << format << " not supported" << std::endl;
+                return;
+            }
+            GL_DEBUG_CHECKD(glReadPixels(OpenGL::canvasPos[0], OpenGL::canvasPos[1], OpenGL::canvasPos[2], OpenGL::canvasPos[3],
+                            format, pixelType, data));
+            if (format == GL_RGBA) {
+                for (int i=0;i<byteBuffer.size();i++) {
+                    if (i%4 == 0) {
+                        byteBuffer[i] = byteBuffer[i+3];
+                    }
+                }
+            } else if (format == GL_DEPTH_COMPONENT) {
+                byteBuffer.reserve(4 * width * height);
+                for (float val : floatBuffer) {
+                    byteBuffer.push_back(static_cast<uint8_t>(val * 255));
+                    byteBuffer.push_back(static_cast<uint8_t>(val * 255));
+                    byteBuffer.push_back(static_cast<uint8_t>(val * 255));
+                    byteBuffer.push_back(static_cast<uint8_t>(0));
+                }
+            }
+            std::ofstream fstream(filename, std::ios::out | std::ios::binary);
+            if (!fstream.is_open()) {
+                std::cerr << "Can't open file " << filename << " for writing";
+                return;
+            } else {
+                std::vector<uint8_t> flippedBuffer(4 * width * height);
+                flip_image(byteBuffer.data(), flippedBuffer.data(), 4, width, height);
+                bool writeok = write_png(fstream, flippedBuffer.data(), width, height);
+                fstream.close();
+            }                        
+        }
 
         ScissorMemo* scissor;
 
@@ -181,9 +238,117 @@ namespace OpenCSG {
             GL_DEBUG_CHECKD(clear());
         }
 
+        class SCSChannelManagerGLSL : public ChannelManagerForBatches {
+        public:
+            virtual Channel request();
+            virtual void merge();
+        };
+
+        Channel SCSChannelManagerGLSL::request() {
+            ChannelManagerForBatches::request();
+            mCurrentChannel = AllChannels;
+            mOccupiedChannels = mCurrentChannel;
+            return mCurrentChannel;
+        }
+
+        static const char *mergeVertexGLSL = R"(#version 120
+varying vec4 v_color;
+
+void main()
+{
+    //gl_Position = gl_Vertex;
+    gl_Position = gl_ModelViewProjectionMatrix * gl_Vertex;
+    v_color = gl_Color;
+}
+)";
+
+        // Subtract color from texture value, takes the absolute value
+        // and adds all components into each channel of the result, scaled by 2.0f.
+        // This way, all 32-bits of the color channel can be used
+        // for an 'equal' alpha test, i.e, to check if value in texture
+        // and color are equal.
+
+        // Note that 1.0f/255.0f cannot be the result of the above computation.
+        // Either the result is 0 (if all components were equal, disregarding
+        // numerical errors), or larger/equal than 2.0f/255.0f. The alpha function
+        // then is actually set to  GL_LESS, 1.0f/255.0f. This is robust.
+        // The scaling by 2.0f is required for NVidia hardware, which considers
+        // the alpha function GL_LESS, 0.5f/255.0f as GL_LESS, 0.0f for some reason.
+        static const char *mergeFragmentGLSL = R"(#version 120
+varying vec4 v_color;
+uniform sampler2D texture;
+uniform float viewWidth;
+uniform float viewHeight;
+    
+void main()
+{
+    vec2 screenTexCoord = gl_FragCoord.xy / vec2(viewWidth, viewHeight);
+    vec4 tex_color = texture2D(texture, screenTexCoord);
+    vec4 diff = abs(tex_color - v_color);
+    gl_FragColor = vec4(dot(diff, vec4(2)));
+}
+)";
+
+        void SCSChannelManagerGLSL::merge()
+        {
+            GL_DEBUG_CHECKD(GLuint programId = OpenGL::getShaderProgram(mergeVertexGLSL, mergeFragmentGLSL));
+            GL_DEBUG_CHECKD(glUseProgram(programId));
+
+            bool isFixedFunction = false;
+            GL_DEBUG_CHECKD(setupProjectiveTexture(isFixedFunction));
+            const int width = OpenGL::canvasPos[2] - OpenGL::canvasPos[0];
+            const int height = OpenGL::canvasPos[3] - OpenGL::canvasPos[1];
+            glUniform1f(glGetUniformLocation(programId, "viewWidth"), width);
+            glUniform1f(glGetUniformLocation(programId, "viewHeight"), height);
+
+            GL_DEBUG_CHECKD(glEnable(GL_ALPHA_TEST));
+            glEnable(GL_CULL_FACE);
+            glEnable(GL_DEPTH_TEST);
+            glDepthFunc(GL_LESS);
+            glDepthMask(GL_TRUE);
+            glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+            GL_DEBUG_CHECKD(glAlphaFunc(GL_LESS, 1.0f / 255.0f));
+
+            std::vector<Channel> channels;
+            channels.push_back(AllChannels);
+            for (std::vector<Channel>::const_iterator c = channels.begin(); c!=channels.end(); ++c) {
+
+                scissor->recall(*c);
+                scissor->enableScissor();
+
+                const std::vector<Primitive*> primitives = getPrimitives(*c);
+                for (std::vector<Primitive*>::const_iterator j = primitives.begin(); j != primitives.end(); ++j) {
+                    GL_DEBUG_CHECKD(glCullFace((*j)->getOperation() == Intersection ? GL_BACK : GL_FRONT));
+                    RenderData* primitiveData = getRenderData(*j);
+                    GLubyte * id = primitiveData->bufferId.vec();
+                    GL_DEBUG_CHECKD(glColor4ubv(id));
+                    GL_DEBUG_CHECKD((*j)->render());
+                }
+            }
+             write_debug_image("debug_d.png", GL_DEPTH_COMPONENT);
+             write_debug_image("debug.png", GL_RGBA);
+
+            GL_DEBUG_CHECKD(scissor->disableScissor());
+
+            glDisable(GL_ALPHA_TEST);
+            glDisable(GL_CULL_FACE);
+            glDepthFunc(GL_LEQUAL);
+            GL_DEBUG_CHECKD(glUseProgram(0));
+
+            resetProjectiveTexture(isFixedFunction);
+
+            GL_DEBUG_CHECKD(clear());
+
+
+
+
+
+
+        }
 
         ChannelManagerForBatches* getChannelManager() {
             return new SCSChannelManagerFragmentProgram;
+            //return new SCSChannelManagerGLSL;
         }
 
 
@@ -525,6 +690,9 @@ namespace OpenCSG {
         GL_DEBUG_CHECKD(glClearDepth(1.0));
 
         GL_DEBUG_CHECKD(renderIntersectedFront(intersected));
+        write_debug_image("intersected_front_d.png", GL_DEPTH_COMPONENT);
+        write_debug_image("intersected_front.png", GL_RGBA);
+
         scissor->enableDepthBounds();
         switch (algorithm) {
         case OcclusionQuery:
@@ -541,8 +709,12 @@ namespace OpenCSG {
         case DepthComplexityAlgorithmUnused:
             break; // does not happen when invoked correctly           
         }
+        write_debug_image("subtractions_d.png", GL_DEPTH_COMPONENT);
+        write_debug_image("subtractions.png", GL_RGBA);
         scissor->disableDepthBounds();
         GL_DEBUG_CHECKD(renderIntersectedBack(intersected));
+        write_debug_image("intersected_back_d.png", GL_DEPTH_COMPONENT);
+        write_debug_image("intersected_back.png", GL_RGBA);
 
         scissor->disableScissor();
 
@@ -551,6 +723,8 @@ namespace OpenCSG {
 
         GL_DEBUG_CHECKD(delete scissor);
         GL_DEBUG_CHECKD(delete channelMgr);
-   }
+        write_debug_image("scs_d.png", GL_DEPTH_COMPONENT);
+        write_debug_image("scs.png", GL_RGBA);
+    }
 
 } // namespace OpenCSG
