@@ -21,6 +21,7 @@
 
 #include "opencsgConfig.h"
 #include "frameBufferObject.h"
+#include "openglHelper.h"
 
 namespace OpenCSG {
 
@@ -44,7 +45,7 @@ namespace OpenCSG {
 
         bool FrameBufferObject::ReadCurrent()
         {
-            bool haveFBO = GLEW_ARB_framebuffer_object != 0;
+            bool haveFBO = hasGLExtension(ARB_framebuffer_object) != 0;
 
             if (haveFBO)
                 glGetIntegerv(GL_FRAMEBUFFER_BINDING, &oldFramebufferID);
@@ -56,7 +57,7 @@ namespace OpenCSG {
         // shareObjects and copyContext do not make sense here, context remains the same.
         bool FrameBufferObject::Initialize(int width, int height, bool /* shareObjects */, bool /* copyContext */ )
         {
-            bool haveFBO = GLEW_ARB_framebuffer_object != 0;
+            bool haveFBO = hasGLExtension(ARB_framebuffer_object) != 0;
             if (!haveFBO)
                 return false;
 

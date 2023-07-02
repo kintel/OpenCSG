@@ -26,8 +26,28 @@
 #define __OpenCSG__opengl_helper_h__
 
 #include "opencsgConfig.h"
-#include <GL/glew.h>
 #include "area.h"
+
+#ifdef USE_GLAD
+  #ifdef _WIN32
+    #include <windows.h>
+  #endif
+  #include "glad/gl.h"
+#else
+  #include <GL/glew.h>
+#endif // USE_GLAD
+
+#ifdef __APPLE__
+  #include <OpenGL/glu.h>
+#else
+  #include <GL/glu.h>
+#endif
+
+#ifdef USE_GLAD
+  #define hasGLExtension(ext) GLAD_GL_## ext
+#else
+  #define hasGLExtension(ext) glewIsSupported(#ext)
+#endif
 
 namespace OpenCSG {
 

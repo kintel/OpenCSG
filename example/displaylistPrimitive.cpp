@@ -22,7 +22,7 @@
 // example for a primitive which renders itself using a display list
 //
 
-#include <GL/glew.h>
+#include "system-gl.h"
 #include "displaylistPrimitive.h"
 
 namespace OpenCSG {

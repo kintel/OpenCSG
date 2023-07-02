@@ -44,8 +44,8 @@ namespace OpenCSG {
 
         bool FrameBufferObjectExt::ReadCurrent()
         {
-            bool haveFBO = GLEW_EXT_framebuffer_object != 0
-                        && GLEW_EXT_packed_depth_stencil != 0;
+            bool haveFBO = hasGLExtension(EXT_framebuffer_object) != 0
+                        && hasGLExtension(EXT_packed_depth_stencil) != 0;
 
             if (haveFBO)
                 glGetIntegerv(GL_FRAMEBUFFER_BINDING_EXT, &oldFramebufferID);
@@ -57,8 +57,8 @@ namespace OpenCSG {
         // shareObjects and copyContext do not make sense here, context remains the same.
         bool FrameBufferObjectExt::Initialize(int width, int height, bool /* shareObjects */, bool /* copyContext */ )
         {
-            bool haveFBO =    GLEW_EXT_framebuffer_object != 0 
-                           && GLEW_EXT_packed_depth_stencil != 0;
+            bool haveFBO =    hasGLExtension(EXT_framebuffer_object) != 0 
+                           && hasGLExtension(EXT_packed_depth_stencil) != 0;
             if (!haveFBO)
                 return false;
 

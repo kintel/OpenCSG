@@ -98,7 +98,7 @@ namespace OpenCSG {
         glDisable(GL_TEXTURE_1D);
         glDisable(GL_TEXTURE_2D);
         glDisable(GL_TEXTURE_3D); // OpenGL 1.2 - take this as given
-        if (GLEW_ARB_texture_cube_map)
+        if (hasGLExtension(ARB_texture_cube_map))
             glDisable(GL_TEXTURE_CUBE_MAP_ARB);
         glDisable(GL_BLEND);
 
@@ -132,12 +132,12 @@ namespace OpenCSG {
         if (   newOffscreenType == OpenCSG::AutomaticOffscreenType
             || newOffscreenType == OpenCSG::FrameBufferObject
         ) {
-            if (GLEW_ARB_framebuffer_object) {
+            if (hasGLExtension(ARB_framebuffer_object)) {
                 newOffscreenType = OpenCSG::FrameBufferObjectARB;
             }
             else
-            if (   GLEW_EXT_framebuffer_object
-                && GLEW_EXT_packed_depth_stencil
+            if (   hasGLExtension(EXT_framebuffer_object)
+                && hasGLExtension(EXT_packed_depth_stencil)
             ) {
                 newOffscreenType = OpenCSG::FrameBufferObjectEXT;
             }
@@ -246,7 +246,7 @@ namespace OpenCSG {
         // find free channel
         if ((mOccupiedChannels & Alpha) == 0) {
             channel = Alpha;
-        }  else if (GLEW_ARB_texture_env_dot3) {
+        }  else if (hasGLExtension(ARB_texture_env_dot3)) {
             if ((mOccupiedChannels & Red) == 0)   {
                 channel = Red;
             } else if ((mOccupiedChannels & Green) == 0) {
@@ -428,7 +428,7 @@ namespace OpenCSG {
             glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
         } else {
             // replicate color into alpha
-            if (GLEW_ARB_texture_env_dot3) {
+            if (hasGLExtension(ARB_texture_env_dot3)) {
                 switch (channel) {
                 case Red: 
                     glColor3f(1.0f, 0.5f, 0.5f); 

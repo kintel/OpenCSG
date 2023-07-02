@@ -24,9 +24,9 @@
 #ifndef __OpenCSG__frame_buffer_object_h__
 #define __OpenCSG__frame_buffer_object_h__
 
+#include "openglHelper.h"
 #include "opencsgConfig.h"
 #include "offscreenBuffer.h"
-#include <GL/glew.h>
 
 namespace OpenCSG {
 
